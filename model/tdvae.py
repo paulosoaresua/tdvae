@@ -122,30 +122,33 @@ class TDVAE(nn.Module):
         l1_b_t1 = beliefs[:, t1, 0, :]
         l1_b_t2 = beliefs[:, t2, 0, :]
 
-        # Sample latent states from beliefs at time t1 and t2
-        self._l2_belief_to_latent(l2_b_t1)
-        l2_z_t1 = self._l2_belief_to_latent.sample()
+        # Sample latent states from beliefs at time t2
         self._l2_belief_to_latent(l2_b_t2)
         l2_z_t2 = self._l2_belief_to_latent.sample()
 
-        self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
-        l1_z_t1 = self._l1_belief_to_latent.sample()
         self._l1_belief_to_latent(torch.cat([l1_b_t2, l2_z_t2], dim=1))
         l1_z_t2 = self._l1_belief_to_latent.sample()
 
-        # We don't need to sample states for the next distributions because we are only interested
-        # in their parameters to compute the log-likelihood of the samples generated from the belief network.
+        z_t2 = torch.cat([l2_z_t2, l1_z_t2], dim=1)
 
-        # Infer state at time t1 based on the state at time t2 (smoothing)
-        self._l2_latent_smoothing(torch.cat([l2_b_t1, l2_b_t2, l2_z_t2], dim=1))
-        self._l1_latent_smoothing(torch.cat([l1_b_t1, l1_b_t2, l1_z_t2, l2_z_t1], dim=1))
+        # Sample latent states at time t1 from samples at time t2
+        self._l2_latent_smoothing(torch.cat([l2_b_t1, z_t2], dim=1))
+        l2_z_t1 = self._l2_latent_smoothing.sample()
+        self._l1_latent_smoothing(torch.cat([l1_b_t1, z_t2, l2_z_t1], dim=1))
+        l1_z_t1 = self._l1_latent_smoothing.sample()
 
-        # Infer state at time t2 based on state at time t1 (transition)
-        self._l2_latent_transition(l2_z_t1)
-        self._l1_latent_transition(torch.cat([l1_z_t1, l2_z_t2], dim=1))
+        z_t1 = torch.cat([l2_z_t1, l1_z_t1], dim=1)
+
+        # Compute parameters of P_B at time t1
+        self._l2_belief_to_latent(l2_b_t1)
+        self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
+
+        # Compute parameters of P_T at time t2
+        self._l2_latent_transition(z_t1)
+        self._l1_latent_transition(torch.cat([z_t1, l2_z_t2], dim=1))
 
         # Reconstruct observation at time t2 based on state at that time
-        x_t2 = torch.sigmoid(self._latent_to_observation(l1_z_t2))
+        x_t2 = torch.sigmoid(self._latent_to_observation(z_t2))
 
         # Compute terms of the loss
 
@@ -186,19 +189,22 @@ class TDVAE(nn.Module):
             self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
             l1_z_t1 = self._l1_belief_to_latent.sample()
 
+            z_t1 = torch.cat([l2_z_t1, l1_z_t1], dim=1)
+
             # Get predictions for the next time steps
             future_xs = []
             for _ in range(time_steps):
-                self._l2_latent_transition(l2_z_t1)
+                self._l2_latent_transition(z_t1)
                 l2_z_t2_from_t1 = self._l2_latent_transition.sample()
-                self._l1_latent_transition(torch.cat([l1_z_t1, l2_z_t2_from_t1], dim=1))
+                self._l1_latent_transition(torch.cat([z_t1, l2_z_t2_from_t1], dim=1))
                 l1_z_t2_from_t1 = self._l1_latent_transition.sample()
 
-                next_x = torch.sigmoid(self._latent_to_observation(l1_z_t2_from_t1))
+                z_t2 = torch.cat([l2_z_t2_from_t1, l1_z_t2_from_t1], dim=1)
+
+                next_x = torch.sigmoid(self._latent_to_observation(z_t2))
                 future_xs.append(next_x)
 
-                l2_z_t1 = l2_z_t2_from_t1
-                l1_z_t1 = l1_z_t2_from_t1
+                z_t1 = z_t2
 
             future_xs = torch.stack(future_xs, dim=1)
 
@@ -217,19 +223,19 @@ class TDVAE(nn.Module):
                                                self._latent_size)
 
         # A latent state at time t1 depends on the beliefs at times t1 and t2 and latent state at time t2
-        self._l2_latent_smoothing = GaussianNN(2 * self._belief_size + self._latent_size, self._d_map_size,
+        self._l2_latent_smoothing = GaussianNN(self._belief_size + 2 * self._latent_size, self._d_map_size,
                                                self._latent_size)
         # In the lower layer, it also depends on the latent state at time t1 from the higher layer
-        self._l1_latent_smoothing = GaussianNN(2 * self._belief_size + 2 * self._latent_size, self._d_map_size,
+        self._l1_latent_smoothing = GaussianNN(self._belief_size + 3 * self._latent_size, self._d_map_size,
                                                self._latent_size)
 
         # From latent state at time t1 to latent state at time t2
-        self._l2_latent_transition = GaussianNN(self._latent_size, self._d_map_size, self._latent_size)
+        self._l2_latent_transition = GaussianNN(2 * self._latent_size, self._d_map_size, self._latent_size)
         # The lower layer also receives the latent state at time t2 from the higher layer
-        self._l1_latent_transition = GaussianNN(2 * self._latent_size, self._d_map_size, self._latent_size)
+        self._l1_latent_transition = GaussianNN(3 * self._latent_size, self._d_map_size, self._latent_size)
 
         # Reconstruct observations at time t2 from the latent state at that time
-        self._latent_to_observation = MLP(self._latent_size, self._obs_size, self._decoder_activation,
+        self._latent_to_observation = MLP(2 * self._latent_size, self._obs_size, self._decoder_activation,
                                           self._decoder_hidden_dims)
 
 
