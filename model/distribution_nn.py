@@ -32,6 +32,9 @@ class DistributionNN(nn.Module):
         # To be filled by subclasses
         self._distribution_params_nns = nn.ModuleList()
 
+        # Value computed in the last call to the forward function
+        self._last_computed_params = None
+
         self._build_h()
         self._build_nn()
 
@@ -46,12 +49,20 @@ class DistributionNN(nn.Module):
             param_values = linear_layer(h)
             distribution_params.append(param_values)
 
-        return tuple(distribution_params)
+        self._last_computed_params = tuple(distribution_params)
+        return self._last_computed_params
 
-    def sample(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.tensor:
+    def sample(self, distribution_params: Tuple[torch.tensor, ...] = None) -> torch.tensor:
         raise NotImplementedError
 
-    def get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
+    def get_log_likelihood(self, x: torch.tensor, distribution_params: Tuple[torch.tensor, ...] = None):
+        distribution = self._get_distribution(distribution_params)
+        return distribution.log_prob(x)
+
+    def get_kl_divergence(self, other_distribution: 'DistributionNN'):
+        raise NotImplementedError
+
+    def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...] = None) -> torch.distributions:
         raise NotImplementedError
 
     def _build_h(self):

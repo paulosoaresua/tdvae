@@ -130,3 +130,7 @@ dmypy.json
 
 # IDE
 .idea/
+
+# Data
+data/
+board/

@@ -5,12 +5,14 @@ from common import get_activation
 
 
 class MLP(nn.Module):
-    def __init__(self, in_features: int, out_features: int, activation: str, hidden_dims: List[int]):
+    def __init__(self, in_features: int, out_features: int, activation: str, hidden_dims: List[int],
+                 activation_on_last_layer: bool = False):
         super(MLP, self).__init__()
         self._in_features = in_features
         self._out_features = out_features
         self._activation = activation
         self._hidden_dims = hidden_dims
+        self._activation_on_last_layer = activation_on_last_layer
 
         self._neural_network = None
 
@@ -26,12 +28,10 @@ class MLP(nn.Module):
 
         layers = []
         for l in range(1, len(dims)):
-            layers.append(nn.Linear(dims[l-1], dims[l]))
+            layers.append(nn.Linear(dims[l - 1], dims[l]))
 
             if self._activation is not None:
-                layers.append(get_activation(self._activation))
+                if l < len(dims) - 1 or self._activation_on_last_layer:
+                    layers.append(get_activation(self._activation))
 
         self._neural_network = nn.Sequential(*layers)
-
-
-
