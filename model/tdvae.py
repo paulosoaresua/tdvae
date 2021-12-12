@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from model import GaussianNN, MultilayerLSTM, MLP
 from typing import List
-from common import Callback
+from common import Callback, calculate_gaussian_kl_divergence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -81,13 +81,14 @@ class TDVAE(nn.Module):
 
                 t1 = np.random.choice(max_t1)
                 t2 = np.random.choice(list(range(1, max_time_step + 1))) + t1
-                loss, (loss_l1_t1, loss_l1_t2, loss_l2_t1, loss_l2_t2, loss_x) = self.calculate_loss(x, t1, t2)
+                loss, (loss_l1_t1, loss_l1_t2, loss_l2_t1, loss_l2_t2, loss_x), x_t2 = self.calculate_loss(x, t1, t2)
                 logs['loss'] = loss.item()
                 logs['loss_l1_t1'] = loss_l1_t1.item()
                 logs['loss_l1_t2'] = loss_l1_t2.item()
                 logs['loss_l2_t1'] = loss_l2_t1.item()
                 logs['loss_l2_t2'] = loss_l2_t2.item()
                 logs['loss_x'] = loss_x.item()
+                logs['x_t2'] = x_t2
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -123,54 +124,49 @@ class TDVAE(nn.Module):
         l1_b_t2 = beliefs[:, t2, 0, :]
 
         # Sample latent states from beliefs at time t2
-        self._l2_belief_to_latent(l2_b_t2)
-        l2_z_t2 = self._l2_belief_to_latent.sample()
+        pb_l2_t2_params = self._l2_belief_to_latent(l2_b_t2)
+        l2_z_t2 = self._l2_belief_to_latent.sample(pb_l2_t2_params)
 
-        self._l1_belief_to_latent(torch.cat([l1_b_t2, l2_z_t2], dim=1))
-        l1_z_t2 = self._l1_belief_to_latent.sample()
+        pb_l1_t2_params = self._l1_belief_to_latent(torch.cat([l1_b_t2, l2_z_t2], dim=1))
+        l1_z_t2 = self._l1_belief_to_latent.sample(pb_l1_t2_params)
 
         z_t2 = torch.cat([l2_z_t2, l1_z_t2], dim=1)
 
         # Sample latent states at time t1 from samples at time t2
-        self._l2_latent_smoothing(torch.cat([l2_b_t1, z_t2], dim=1))
-        l2_z_t1 = self._l2_latent_smoothing.sample()
-        self._l1_latent_smoothing(torch.cat([l1_b_t1, z_t2, l2_z_t1], dim=1))
-        l1_z_t1 = self._l1_latent_smoothing.sample()
+        qs_l2_t1_params = self._l2_latent_smoothing(torch.cat([l2_b_t1, z_t2], dim=1))
+        l2_z_t1 = self._l2_latent_smoothing.sample(qs_l2_t1_params)
+        qs_l1_t1_params = self._l1_latent_smoothing(torch.cat([l1_b_t1, z_t2, l2_z_t1], dim=1))
+        l1_z_t1 = self._l1_latent_smoothing.sample(qs_l1_t1_params)
 
         z_t1 = torch.cat([l2_z_t1, l1_z_t1], dim=1)
 
         # Compute parameters of P_B at time t1
-        self._l2_belief_to_latent(l2_b_t1)
-        self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
+        pb_l2_t1_params = self._l2_belief_to_latent(l2_b_t1)
+        pb_l1_t1_params = self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
 
         # Compute parameters of P_T at time t2
-        self._l2_latent_transition(z_t1)
-        self._l1_latent_transition(torch.cat([z_t1, l2_z_t2], dim=1))
+        pt_l2_t2_params = self._l2_latent_transition(z_t1)
+        pt_l1_t2_params = self._l1_latent_transition(torch.cat([z_t1, l2_z_t2], dim=1))
 
         # Reconstruct observation at time t2 based on state at that time
         x_t2 = torch.sigmoid(self._latent_to_observation(z_t2))
 
         # Compute terms of the loss
-
-        # KL divergence between qS and pB.
-        loss_l1_t1 = self._l1_latent_smoothing.get_kl_divergence(self._l1_belief_to_latent)
+        loss_l1_t1 = calculate_gaussian_kl_divergence(qs_l1_t1_params, pb_l1_t1_params)
         loss_l1_t2 = torch.sum(self._l1_belief_to_latent.get_log_likelihood(
-            l1_z_t2) - self._l1_latent_transition.get_log_likelihood(l1_z_t2), dim=1)
+            l1_z_t2, pb_l1_t2_params) - self._l1_latent_transition.get_log_likelihood(l1_z_t2, pt_l1_t2_params), dim=1)
 
-        loss_l2_t1 = self._l2_latent_smoothing.get_kl_divergence(self._l2_belief_to_latent)
+        loss_l2_t1 = calculate_gaussian_kl_divergence(qs_l2_t1_params, pb_l2_t1_params)
         loss_l2_t2 = torch.sum(self._l2_belief_to_latent.get_log_likelihood(
-            l2_z_t2) - self._l2_latent_transition.get_log_likelihood(l2_z_t2), dim=1)
+            l2_z_t2, pb_l2_t2_params) - self._l2_latent_transition.get_log_likelihood(l2_z_t2, pt_l2_t2_params), dim=1)
 
         loss_x = F.binary_cross_entropy(x_t2, x[:, t2, :])
 
         loss = loss_l1_t1 + loss_l1_t2 + loss_l2_t1 + loss_l2_t2 + loss_x
+        loss_terms = (torch.mean(loss_l1_t1), torch.mean(loss_l1_t2), torch.mean(loss_l2_t1),
+                      torch.mean(loss_l2_t2), torch.mean(loss_x))
 
-        return torch.mean(loss), \
-               (torch.mean(loss_l1_t1),
-                torch.mean(loss_l1_t2),
-                torch.mean(loss_l2_t1),
-                torch.mean(loss_l2_t2),
-                torch.mean(loss_x))
+        return torch.mean(loss), loss_terms, x_t2
 
     def rollout(self, x: torch.tensor, time_steps: int):
         self.eval()

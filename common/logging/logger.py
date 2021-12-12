@@ -10,9 +10,9 @@ class Logger(Callback):
                  update_frequency: int = 100):
         super(Logger, self).__init__()
         if id is None:
-            self._id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         else:
-            self._id = id
+            self.id = id
 
         self._update_frequency_type = update_frequency_type
         self._update_frequency = update_frequency
