@@ -7,12 +7,14 @@ import torch.nn as nn
 
 
 class MultilayerLSTMCell(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 1, top_down_transitions: bool = False):
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 1, every_layer_input: bool = False,
+                 top_down_transitions: bool = False):
         """
 
         :param input_size: size of the input in each cell
         :param hidden_size: size of the hidden state
         :param num_layers: number of layers of cells stacked on top of each other
+        :param every_layer_input: whether layers other than the base layer must also receive observations
         :param top_down_transitions: whether the hidden state of a cell in a higher layer must be concatenated to
         the input of a cell in the next time step of a immediate lower layer.
         """
@@ -20,6 +22,7 @@ class MultilayerLSTMCell(nn.Module):
         self._input_size = input_size
         self._hidden_size = hidden_size
         self._num_layers = num_layers
+        self._every_layer_input = every_layer_input
         self._top_down_transitions = top_down_transitions
 
         self._input_sizes = None
@@ -31,6 +34,11 @@ class MultilayerLSTMCell(nn.Module):
         # The input of cells in higher layers are the hidden states from lower layers.
         # Only the bottom layer receives an external input (observations)
         self._input_sizes = [self._input_size] + [self._hidden_size for _ in range(1, self._num_layers)]
+
+        if self._every_layer_input:
+            for i in range(1, self._num_layers):
+                # All layers will receive the same input that was given to the base layer
+                self._input_sizes[i] += self._input_size
 
         if self._top_down_transitions:
             for l in range(self._num_layers - 1):
@@ -54,6 +62,8 @@ class MultilayerLSTMCell(nn.Module):
         input_ = x
 
         for l in range(self._num_layers):
+            if l > 0 and self._every_layer_input:
+                input_ = torch.cat([input_, x], dim=1)
             if l < self._num_layers - 1 and self._top_down_transitions:
                 if hx[l + 1] is None:
                     # In the first time step, use a zero vector per sample
@@ -74,9 +84,11 @@ class MultilayerLSTMCell(nn.Module):
 
 
 class MultilayerLSTM(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 1, top_down_transitions: bool = False):
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 1, every_layer_input: bool = False,
+                 top_down_transitions: bool = False):
         super(MultilayerLSTM, self).__init__()
-        self._lstm_cell = MultilayerLSTMCell(input_size, hidden_size, num_layers, top_down_transitions)
+        self._lstm_cell = MultilayerLSTMCell(input_size, hidden_size, num_layers, every_layer_input,
+                                             top_down_transitions)
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         hx = None
@@ -86,4 +98,3 @@ class MultilayerLSTM(nn.Module):
             outputs.append(torch.cat([h[:, None, None, :] for (h, c) in hx], dim=2))
 
         return torch.cat(outputs, dim=1)  # size: batch_size, length, layers, hidden_size
-

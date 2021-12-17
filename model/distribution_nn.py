@@ -28,6 +28,7 @@ class DistributionNN(nn.Module):
 
         self._tanh_path = None
         self._sigmoid_path = None
+        self._vanilla_encoder = None
 
         # To be filled by subclasses
         self._distribution_params_nns = nn.ModuleList()
@@ -40,6 +41,7 @@ class DistributionNN(nn.Module):
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         h = self._tanh_path(x) * self._sigmoid_path(x)
+        # h = self._vanilla_encoder(x)
 
         distribution_params = []
 
@@ -59,7 +61,7 @@ class DistributionNN(nn.Module):
         distribution = self._get_distribution(distribution_params)
         return distribution.log_prob(x)
 
-    def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...] = None) -> torch.distributions:
+    def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
         raise NotImplementedError
 
     def _build_h(self):
@@ -74,6 +76,14 @@ class DistributionNN(nn.Module):
             nn.Sigmoid()
         ]
         self._sigmoid_path = nn.Sequential(*sigmoid_modules)
+
+        # vanilla_encoder_modules = [
+        #     nn.Linear(self._in_features, 512),
+        #     nn.ReLU(),
+        #     nn.Linear(512, 256),
+        #     nn.ReLU()
+        # ]
+        # self._vanilla_encoder = nn.Sequential(*vanilla_encoder_modules)
 
     def _build_nn(self):
         raise NotImplementedError

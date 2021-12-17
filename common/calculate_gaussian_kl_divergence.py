@@ -2,15 +2,16 @@ import torch
 from typing import Tuple
 
 
-def calculate_gaussian_kl_divergence(q_params: Tuple[torch.tensor, ...], p_params: Tuple[torch.tensor, ...]):
+def calculate_gaussian_kl_divergence(p_params: Tuple[torch.tensor, ...], q_params: Tuple[torch.tensor, ...]):
     """
-    Computes KL(q||p)
+    Computes KL(p||q)
     """
 
-    mu_q, log_std_q = q_params
-    mu_p, log_std_p = p_params
-    mu_diff = mu_q - mu_p
-    log_var_diff = 2 * (log_std_q - log_std_p)
+    mu_p, log_var_p = p_params
+    mu_q, log_var_q = q_params
 
-    kl = -0.5 * (1.0 + log_var_diff - log_var_diff.exp() - (mu_diff ** 2 / (2 * log_std_p).exp()))
+    p = torch.distributions.normal.Normal(mu_p, torch.exp(0.5 * log_var_p))
+    q = torch.distributions.normal.Normal(mu_q, torch.exp(0.5 * log_var_q))
+
+    kl = torch.distributions.kl.kl_divergence(p, q)
     return torch.sum(kl, dim=1)

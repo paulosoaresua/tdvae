@@ -15,13 +15,16 @@ class GaussianNN(DistributionNN):
         super(GaussianNN, self).__init__(in_features, hidden_size)
 
     def sample(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
-        epsilon = torch.rand_like(distribution_params[0])
-        samples = distribution_params[0] + torch.exp(distribution_params[1]) * epsilon
+        mu, log_var = distribution_params
+
+        epsilon = torch.randn_like(mu)
+        samples = mu + torch.exp(0.5 * log_var) * epsilon
 
         return samples
 
     def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
-        return torch.distributions.normal.Normal(distribution_params[0], torch.exp(distribution_params[1]))
+        mu, log_var = distribution_params
+        return torch.distributions.normal.Normal(mu, torch.exp(0.5 * log_var))
 
     def _build_nn(self):
         # mean and log std branches
