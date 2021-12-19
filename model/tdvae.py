@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from model import BaseModel, GaussianNN, MultilayerLSTM, MLP
 from typing import List
-from common import calculate_gaussian_kl_divergence
+from common import calculate_gaussian_kl_divergence, calculate_gaussian_log_prob
 from callback import Callback
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -67,8 +67,6 @@ class TDVAE(BaseModel):
         # MLP that reconstructs observations from latent states
         self._latent_to_observation = None
 
-        self._step = 0
-
         self._build_nn()
 
     def forward(self, x: torch.tensor) -> torch.tensor:
@@ -76,18 +74,11 @@ class TDVAE(BaseModel):
         return self._belief_nn(minified_x)
 
     def calculate_loss(self, x: torch.tensor, y: torch.tensor) -> torch.tensor:
-        ITER = 10000000000
-
         # Random time steps with a predefined max range
         t1 = torch.randint(low=0, high=x.size(1) - self._max_time_diff, size=(x.size(0),), device=x.device)
         t2 = t1 + torch.randint(low=1, high=self._max_time_diff + 1, size=(x.size(0),), device=x.device)
 
-        # Calculate beliefs
         beliefs = self(x)
-
-        if self._step % ITER == 0:
-            print('Belief')
-            print(beliefs[0][0])
 
         # Extract beliefs at time t1 and t2 (element-wise indexing over the time dimension)
         t1_expanded = t1[..., None, None, None].expand(-1, -1, beliefs.size(2), beliefs.size(3))
@@ -101,31 +92,25 @@ class TDVAE(BaseModel):
         l1_b_t1 = beliefs_t1[:, 0]
         l1_b_t2 = beliefs_t2[:, 0]
 
-        # Sample latent states from beliefs at time t2
         pb_l2_t2_params = self._l2_belief_to_latent(l2_b_t2)
         l2_z_t2 = self._l2_belief_to_latent.sample(pb_l2_t2_params)
 
         pb_l1_t2_params = self._l1_belief_to_latent(torch.cat([l1_b_t2, l2_z_t2], dim=1))
         l1_z_t2 = self._l1_belief_to_latent.sample(pb_l1_t2_params)
 
-        # Aggregate samples at time t2
         z_t2 = torch.cat([l1_z_t2, l2_z_t2], dim=1)
 
-        # Sample latent states at time t1 from samples at time t2
         qs_l2_t1_params = self._l2_latent_smoothing(torch.cat([z_t2, l2_b_t1], dim=1))
         l2_z_t1 = self._l2_latent_smoothing.sample(qs_l2_t1_params)
 
         qs_l1_t1_params = self._l1_latent_smoothing(torch.cat([z_t2, l1_b_t1, l2_z_t1], dim=1))
         l1_z_t1 = self._l1_latent_smoothing.sample(qs_l1_t1_params)
 
-        # Aggregate samples at time t1
         z_t1 = torch.cat([l1_z_t1, l2_z_t1], dim=1)
 
-        # Compute parameters of P_B at time t1
         pb_l2_t1_params = self._l2_belief_to_latent(l2_b_t1)
         pb_l1_t1_params = self._l1_belief_to_latent(torch.cat([l1_b_t1, l2_z_t1], dim=1))
 
-        # Compute parameters of P_T at time t2
         pt_l2_t2_params = self._l2_latent_transition(z_t1)
         pt_l1_t2_params = self._l1_latent_transition(torch.cat([z_t1, l2_z_t2], dim=1))
 
@@ -135,27 +120,10 @@ class TDVAE(BaseModel):
         # Compute terms of the loss
 
         # KL(qs, pb)
-
         mus_pb1 = torch.cat([pb_l1_t1_params[0], pb_l2_t1_params[0]], dim=1)
         logvars_pb1 = torch.cat([pb_l1_t1_params[1], pb_l2_t1_params[1]], dim=1)
         mus_qs1 = torch.cat([qs_l1_t1_params[0], qs_l2_t1_params[0]], dim=1)
         logvars_qs1 = torch.cat([qs_l1_t1_params[1], qs_l2_t1_params[1]], dim=1)
-
-        loss_l2_t1 = ops.kl_div_gaussian(qs_l2_t1_params[0], qs_l2_t1_params[1], pb_l2_t1_params[0],
-                                         pb_l2_t1_params[1]).mean()
-        loss_l1_t1 = ops.kl_div_gaussian(qs_l1_t1_params[0], qs_l1_t1_params[1], pb_l1_t1_params[0],
-                                         pb_l1_t1_params[1]).mean()
-
-        # loss_l2_t1 = calculate_gaussian_kl_divergence(qs_l2_t1_params, pb_l2_t1_params).mean()
-        # loss_l1_t1 = calculate_gaussian_kl_divergence(qs_l1_t1_params, pb_l1_t1_params).mean()
-
-        # log(pb(t2)) - log(pt(t2))
-        # loss_l2_t2 = torch.sum(self._l2_belief_to_latent.get_log_likelihood(
-        #     l2_z_t2, pb_l2_t2_params) - self._l2_latent_transition.get_log_likelihood(l2_z_t2, pt_l2_t2_params),
-        #                        dim=1).mean()
-        # loss_l1_t2 = torch.sum(self._l1_belief_to_latent.get_log_likelihood(
-        #     l1_z_t2, pb_l1_t2_params) - self._l1_latent_transition.get_log_likelihood(l1_z_t2, pt_l1_t2_params),
-        #                        dim=1).mean()
 
         mus_pb = torch.cat([pb_l1_t2_params[0], pb_l2_t2_params[0]], dim=1)
         logvars_pb = torch.cat([pb_l1_t2_params[1], pb_l2_t2_params[1]], dim=1)
@@ -163,41 +131,13 @@ class TDVAE(BaseModel):
         mus_pt = torch.cat([pt_l1_t2_params[0], pt_l2_t2_params[0]], dim=1)
         logvars_pt = torch.cat([pt_l1_t2_params[1], pt_l2_t2_params[1]], dim=1)
 
-        loss_l2_t2 = (ops.gaussian_log_prob(pb_l2_t2_params[0], pb_l2_t2_params[1], l2_z_t2) -
-                      ops.gaussian_log_prob(pt_l2_t2_params[0], pt_l2_t2_params[1], l2_z_t2)).mean()
-        loss_l1_t2 = (ops.gaussian_log_prob(pb_l1_t2_params[0], pb_l1_t2_params[1], l1_z_t2) -
-                      ops.gaussian_log_prob(pt_l1_t2_params[0], pt_l1_t2_params[1], l1_z_t2)).mean()
-
         # KL terms
-        # kl_t1_loss = (loss_l1_t1 + loss_l2_t1)
-        kl_t1_loss = ops.kl_div_gaussian(mus_qs1, logvars_qs1, mus_pb1, logvars_pb1).mean()
-        # kl_t2_loss = (loss_l1_t2 + loss_l2_t2)
-        # zs = torch.cat([l1_z_t2, l2_z_t2], dim=1)
-        kl_t2_loss = (ops.gaussian_log_prob(mus_pb, logvars_pb, z_t2) -
-                      ops.gaussian_log_prob(mus_pt, logvars_pt, z_t2)).mean()
+        kl_t1_loss = calculate_gaussian_kl_divergence((mus_qs1, logvars_qs1), (mus_pb1, logvars_pb1)).mean()
+
+        kl_t2_loss = (calculate_gaussian_log_prob(mus_pb, logvars_pb, z_t2) -
+                      calculate_gaussian_log_prob(mus_pt, logvars_pt, z_t2)).mean()
+
         kl_loss = kl_t1_loss + kl_t2_loss
-
-        if self._step % ITER == 0:
-            print('qB')
-            print(mus_pb[0])
-            print(logvars_pb[0])
-            print(z_t2[0])
-
-            print('qS')
-            print(mus_qs1[0])
-            print(logvars_qs1[0])
-            print(z_t1[0])
-
-            print('pT')
-            print(mus_pt[0])
-            print(logvars_pt[0])
-
-            print('qB_1')
-            print(mus_pb1[0])
-            print(logvars_pb1[0])
-
-            print('qD')
-            print(x_t2[0])
 
         # Reconstruction loss
         t2_expanded = t2[..., None, None].expand(-1, -1, x.size(2))
@@ -209,27 +149,13 @@ class TDVAE(BaseModel):
 
         total_loss = kl_loss + x_loss
 
-        if self._step % ITER == 0:
-            print("T2")
-            print(t2)
-
-        self._step += 1
-
-        # import matplotlib.pyplot as plt
-        # plt.imshow(true_x_t2[0].reshape(28, 28))
-        # plt.show()
-
         # Store current computation for log purposes
-        self.log_keys['loss_l1_t1'] = loss_l1_t1.item()
-        self.log_keys['loss_l2_t1'] = loss_l2_t1.item()
-        self.log_keys['loss_l1_t2'] = loss_l1_t2.item()
-        self.log_keys['loss_l2_t2'] = loss_l2_t2.item()
-        self.log_keys['kl_t1_loss'] = kl_t1_loss.item()
-        self.log_keys['kl_t2_loss'] = kl_t2_loss.item()
+        self.log_keys['kl_smoothing_loss'] = kl_t1_loss.item()
+        self.log_keys['kl_prediction_loss'] = kl_t2_loss.item()
         self.log_keys['kl_loss'] = kl_loss.item()
         self.log_keys['bce_loss'] = bce_loss.item()
         self.log_keys['bce_optimal_loss'] = bce_optimal_loss.item()
-        self.log_keys['x_loss'] = x_loss.item()
+        self.log_keys['reconstruction_loss'] = x_loss.item()
         self.log_keys['total_loss'] = total_loss.item()
 
         return total_loss
@@ -281,7 +207,7 @@ class TDVAE(BaseModel):
         self._pre_processing_nn = MLP(self._obs_size, self._minified_obs_size, self._pre_processing_activation,
                                       self._pre_processing_hidden_dims, True)
 
-        # In the paper they stack two LSTM on top of each other with transitions between higher layers and lower layers
+        # Stacked LSTMs with across-time connections between higher and lower layers.
         self._belief_nn = MultilayerLSTM(self._minified_obs_size, self._belief_size, 2, True, True)
 
         # The input to this NN is the belief of the lower layer + the latent state from the higher layer
