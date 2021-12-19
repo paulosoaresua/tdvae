@@ -19,5 +19,5 @@ class ProgressCheck(Callback):
         if self._display_measures is not None:
             for key, value in logs.items():
                 if key in self._display_measures:
-                    progress += f" {key}: {value:.4f}"
+                    progress += f" {key}: {value:.10f}"
         print(progress)

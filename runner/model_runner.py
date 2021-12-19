@@ -1,4 +1,5 @@
 import torch
+import torch.nn  as nn
 from model import BaseModel
 from typing import List
 from callback import Callback
@@ -34,6 +35,7 @@ class ModelRunner:
 
                 optimizer.zero_grad()
                 loss.backward()
+                nn.utils.clip_grad_norm_(self._model.parameters(), 5.0)
                 optimizer.step()
 
                 # Other callbacks might overwrite the model internal log if they call the
@@ -41,6 +43,9 @@ class ModelRunner:
                 logs = self._model.log_keys.copy()
                 for callback in callbacks:
                     callback.on_train_batch_end(batch, logs, True)
+
+                # if batch == 1:
+                #     return
 
             for callback in callbacks:
                 callback.on_train_epoch_end(epoch, logs, True)

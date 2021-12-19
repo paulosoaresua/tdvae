@@ -31,28 +31,22 @@ class DistributionNN(nn.Module):
         self._vanilla_encoder = None
 
         # To be filled by subclasses
-        self._distribution_params_nns = nn.ModuleList()
+        self._build_torso()
 
-        # Value computed in the last call to the forward function
-        self._last_computed_params = None
-
-        self._build_h()
-        self._build_nn()
+        self._branch_modules = nn.ModuleList()
+        self._build_branches()
 
     def forward(self, x: torch.tensor) -> torch.tensor:
-        h = self._tanh_path(x) * self._sigmoid_path(x)
-        # h = self._vanilla_encoder(x)
+        common_torso = self._tanh_path(x) * self._sigmoid_path(x)
 
         distribution_params = []
-
-        for param_idx, linear_layer in enumerate(self._distribution_params_nns):
+        for branch_layer in self._branch_modules:
             # Use the linear layer that branches out of the shared network to compute the values
             # of the posterior parameters
-            param_values = linear_layer(h)
+            param_values = branch_layer(common_torso)
             distribution_params.append(param_values)
 
-        self._last_computed_params = tuple(distribution_params)
-        return self._last_computed_params
+        return tuple(distribution_params)
 
     def sample(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.tensor:
         raise NotImplementedError
@@ -64,7 +58,7 @@ class DistributionNN(nn.Module):
     def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
         raise NotImplementedError
 
-    def _build_h(self):
+    def _build_torso(self):
         tanh_modules = [
             nn.Linear(self._in_features, self._hidden_size),
             nn.Tanh()
@@ -77,13 +71,5 @@ class DistributionNN(nn.Module):
         ]
         self._sigmoid_path = nn.Sequential(*sigmoid_modules)
 
-        # vanilla_encoder_modules = [
-        #     nn.Linear(self._in_features, 512),
-        #     nn.ReLU(),
-        #     nn.Linear(512, 256),
-        #     nn.ReLU()
-        # ]
-        # self._vanilla_encoder = nn.Sequential(*vanilla_encoder_modules)
-
-    def _build_nn(self):
+    def _build_branches(self):
         raise NotImplementedError

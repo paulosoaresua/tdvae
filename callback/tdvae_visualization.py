@@ -9,6 +9,7 @@ import matplotlib.gridspec as gridspec
 import io
 import PIL.Image
 from torchvision.transforms import ToTensor
+from common import set_random_seed
 
 
 class TDVAEVisualization(Callback):
@@ -36,34 +37,44 @@ class TDVAEVisualization(Callback):
         self._logger.on_train_batch_end(epoch, logs, train)
 
     def _rollout(self) -> torch.tensor:
+        random_state = torch.get_rng_state()
+        set_random_seed(42)
+
         x = next(iter(self._data_loader))[0]
-        future = self._model.rollout(x, self._rollout_size)
+        mode = self._model.training
+        self._model.eval()
+        with torch.no_grad():
+            future = self._model.rollout(x, self._rollout_size)
 
-        fig = plt.figure(0, figsize=(10, 3))
-        fig.clf()
-        gs = gridspec.GridSpec(self._batch_size, self._context_size + self._rollout_size)
-        gs.update(wspace=0.025, hspace=0.025)
+            fig = plt.figure(0, figsize=(10, 3))
+            fig.clf()
+            gs = gridspec.GridSpec(self._batch_size, self._context_size + self._rollout_size)
+            gs.update(wspace=0.025, hspace=0.025)
 
-        for i in range(self._batch_size):
-            # Context
-            img = x[i]
-            for n in range(self._context_size):
-                axes = plt.subplot(gs[i, n])
-                axes.imshow(img[n, :].reshape(28, 28), cmap='gray')
-                axes.axis('off')
+            for i in range(self._batch_size):
+                # Context
+                img = x[i]
+                for n in range(self._context_size):
+                    axes = plt.subplot(gs[i, n])
+                    axes.imshow(img[n, :].reshape(28, 28), cmap='gray')
+                    axes.axis('off')
 
-            # Predictions
-            img = future[i]
-            for n in range(self._rollout_size):
-                axes = plt.subplot(gs[i, n + self._context_size])
-                axes.imshow(img[n, :].reshape(28, 28), cmap='gray')
-                axes.axis('off')
+                # Predictions
+                img = future[i]
+                for n in range(self._rollout_size):
+                    axes = plt.subplot(gs[i, n + self._context_size])
+                    axes.imshow(img[n, :].reshape(28, 28), cmap='gray')
+                    axes.axis('off')
 
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
-        plt.close(fig)
-        buffer.seek(0)
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png')
+            plt.close(fig)
+            buffer.seek(0)
 
-        image = PIL.Image.open(buffer)
-        return ToTensor()(image)
+            image = PIL.Image.open(buffer)
+
+            self._model.train(mode)
+            torch.set_rng_state(random_state)
+
+            return ToTensor()(image)
 

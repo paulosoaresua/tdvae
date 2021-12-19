@@ -26,7 +26,8 @@ class GaussianNN(DistributionNN):
         mu, log_var = distribution_params
         return torch.distributions.normal.Normal(mu, torch.exp(0.5 * log_var))
 
-    def _build_nn(self):
-        # mean and log std branches
-        self._distribution_params_nns.append(nn.Linear(self._hidden_size, self._latent_size))
-        self._distribution_params_nns.append(nn.Linear(self._hidden_size, self._latent_size))
+    def _build_branches(self):
+        mu = nn.Linear(self._hidden_size, self._latent_size)
+        log_var = nn.Linear(self._hidden_size, self._latent_size)
+        self._branch_modules.append(mu)
+        self._branch_modules.append(log_var)

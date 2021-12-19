@@ -14,7 +14,7 @@ class RolloutImage(object):
 
     def __call__(self, image):
         # Choose a random direction. The model should learn it.
-        direction = np.random.choice([-1, 1])  # left and right
+        direction = -1 # np.random.choice([-1, 1])  # left and right
         images = []
         for t in range(self._time_steps):
             images.append(torch.roll(image, shifts=direction * self._offset * t, dims=2))
