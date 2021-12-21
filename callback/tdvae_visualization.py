@@ -1,6 +1,6 @@
 from callback import Callback
 from callback.logging import Logger
-from typing import Dict
+from typing import Dict, Any
 from model import TDVAE
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -9,7 +9,8 @@ import matplotlib.gridspec as gridspec
 import io
 import PIL.Image
 from torchvision.transforms import ToTensor
-from common import set_random_seed
+import numpy as np
+import random
 
 
 class TDVAEVisualization(Callback):
@@ -26,19 +27,19 @@ class TDVAEVisualization(Callback):
         self._context_size = context_size
         self._rollout_size = rollout_size
 
-    def _on_train_batch_end(self, batch: int, logs: Dict[str, float], train: bool):
-        img = self._rollout()
-        logs = {'rollout': img}
-        self._logger.on_train_batch_end(batch, logs, train)
+    def _on_train_batch_end(self, batch: int, logs: Dict[str, Any], train: bool):
+        image = self._rollout()
+        self._logger.log_image('rollout', image, self._step, train)
 
-    def _on_train_epoch_end(self, epoch: int, logs: Dict[str, float], train: bool):
-        img = self._rollout()
-        logs = {'rollout': img}
-        self._logger.on_train_batch_end(epoch, logs, train)
+    def _on_train_epoch_end(self, epoch: int, logs: Dict[str, Any], train: bool):
+        image = self._rollout()
+        self._logger.log_image('rollout', image, self._step, train)
 
     def _rollout(self) -> torch.tensor:
-        random_state = torch.get_rng_state()
-        set_random_seed(42)
+        # Keep current training random state
+        random_state = random.getstate()
+        numpy_random_state = np.random.get_state()
+        torch_random_state = torch.get_rng_state()
 
         x = next(iter(self._data_loader))[0]
         mode = self._model.training
@@ -74,7 +75,11 @@ class TDVAEVisualization(Callback):
             image = PIL.Image.open(buffer)
 
             self._model.train(mode)
-            torch.set_rng_state(random_state)
+
+            # Set training random state to its original value
+            random.setstate(random_state)
+            np.random.set_state(numpy_random_state)
+            torch.set_rng_state(torch_random_state)
 
             return ToTensor()(image)
 

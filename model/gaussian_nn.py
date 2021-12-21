@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 from model import DistributionNN
 from typing import Tuple
+import numpy as np
 
 
 class GaussianNN(DistributionNN):
@@ -22,9 +23,21 @@ class GaussianNN(DistributionNN):
 
         return samples
 
-    def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
+    def calculate_log_prob(self, distribution_params: Tuple[torch.tensor, ...], x: torch.tensor):
         mu, log_var = distribution_params
-        return torch.distributions.normal.Normal(mu, torch.exp(0.5 * log_var))
+        log_pi = np.log(2.0 * np.pi)
+        log_prob = -0.5 * (log_pi + log_var + ((x - mu) ** 2 / log_var.exp()))
+        return torch.sum(log_prob, dim=1)
+
+    def calculate_kl_divergence(self, p_params: Tuple[torch.tensor, ...],
+                                q_params: Tuple[torch.tensor, ...]) -> torch.distributions:
+        mu_p, log_var_p = p_params
+        mu_q, log_var_q = q_params
+
+        log_var_diff = log_var_p - log_var_q
+        kl = -0.5 * (1.0 + log_var_diff - log_var_diff.exp() - ((mu_p - mu_q) ** 2 / log_var_q.exp()))
+
+        return torch.sum(kl, dim=1)
 
     def _build_branches(self):
         mu = nn.Linear(self._hidden_size, self._latent_size)

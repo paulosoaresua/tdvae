@@ -51,11 +51,11 @@ class DistributionNN(nn.Module):
     def sample(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.tensor:
         raise NotImplementedError
 
-    def get_log_likelihood(self, x: torch.tensor, distribution_params: Tuple[torch.tensor, ...]):
-        distribution = self._get_distribution(distribution_params)
-        return distribution.log_prob(x)
+    def calculate_log_prob(self, distribution_params: Tuple[torch.tensor, ...], x: torch.tensor):
+        raise NotImplementedError
 
-    def _get_distribution(self, distribution_params: Tuple[torch.tensor, ...]) -> torch.distributions:
+    def calculate_kl_divergence(self, p_params: Tuple[torch.tensor, ...],
+                                q_params: Tuple[torch.tensor, ...]) -> torch.distributions:
         raise NotImplementedError
 
     def _build_torso(self):

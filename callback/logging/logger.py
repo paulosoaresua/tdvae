@@ -1,6 +1,7 @@
-from typing import Dict
+from typing import Dict, Any
 import datetime
 from callback import Callback
+import torch
 
 
 class Logger(Callback):
@@ -14,7 +15,11 @@ class Logger(Callback):
         else:
             self.id = id
 
-    def log_hyper_parameters(self, performance_measures: Dict[str, float], hyper_parameters: Dict[str, float]):
+    def log_hyper_parameters(self, performance_measures: Dict[str, Any], hyper_parameters: Dict[str, float]):
         raise NotImplementedError
+
+    def log_image(self, measure: str, value: torch.tensor, step: int, train: bool):
+        raise NotImplementedError
+
 
 
